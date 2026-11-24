@@ -1,0 +1,1 @@
+{"description":"Proxy entre o MVP da Brittech Educação e as APIs de IA (Maritaca, DeepSeek, Gemini). Resolve o bloqueio CORS e mantém as chaves só no servidor.","license":"MIT","main":"server.js","name":"brittech-proxy","private":true,"scripts":{"start":"node server.js"},"version":"1.0.0"}

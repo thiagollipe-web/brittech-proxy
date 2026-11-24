@@ -1,0 +1,24 @@
+# Render — plano gratuito (web service Node.js do proxy da Brittech Educação)
+# Como usar: conecte este repositório/pasta no Render (New → Web Service),
+# ou suba a pasta proxy como repositório. O Render lê este arquivo e cria o
+# serviço sozinho. As chaves vão em Environment Variables no painel do
+# Render — NUNCA neste arquivo.
+services:
+  - type: web
+    name: brittech-proxy
+    runtime: node
+    plan: free
+    buildCommand: "echo 'sem build — só stdlib do Node'"
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: PORT
+        value: "10000"
+      # Chaves (preencha no painel do Render, em Environment Variables):
+      #   MARITACA_API_KEY
+      #   DEEPSEEK_API_KEY
+      #   GEMINI_API_KEY
+      - key: ALLOWED_ORIGINS
+        value: https://thiagollipe-web.github.io
