@@ -47,9 +47,9 @@ const tokensPorIp = new Map(); // ip -> [timestamps]
 // "tom" ajusta o ritmo: pergunta +10 pontos, resposta -5 pontos.
 const TTS_VOZES = {
   professora: { voz: 'pt-BR-FranciscaNeural', rate: '+0%', pitch: '+0st' },
-  pensador:   { voz: 'pt-BR-AntonioNeural',   rate: '-5%', pitch: '-2st' },
+  pensador:   { voz: 'pt-BR-AntonioNeural',   rate: '+0%', pitch: '+0st' },
   anotador:   { voz: 'pt-BR-ThalitaMultilingualNeural', rate: '+0%', pitch: '+0st' },
-  curioso:    { voz: 'pt-BR-AntonioNeural',   rate: '+25%', pitch: '+6st' },
+  curioso:    { voz: 'pt-BR-AntonioNeural',   rate: '+12%', pitch: '+3st' },
 };
 const TTS_VOZES_PERMITIDAS = Object.keys(TTS_VOZES).map((k) => TTS_VOZES[k].voz);
 const TTS_LIMITE_JANELA_MS = 5 * 60 * 1000;
