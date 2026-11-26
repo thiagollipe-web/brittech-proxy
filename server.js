@@ -20,13 +20,21 @@
 //   ALLOWED_ORIGINS    origens liberadas no CORS, separadas por vírgula
 //                      (padrão: http://localhost:*, http://127.0.0.1:* e
 //                      https://thiagollipe-web.github.io)
+//   TELEGRAM_BOT_TOKEN token do bot do Telegram (@BotFather) — sem ele,
+//                      o bot fica inerte e o resto do proxy não muda
+//   TELEGRAM_WEBHOOK_URL URL do webhook (padrão: a URL do Render)
+//   TELEGRAM_WEBHOOK_SECRET segredo opcional do webhook (valida o Telegram)
+//   TELEGRAM_AUTO_REGISTRO '0' desliga o registro automático do webhook
+//   TELEGRAM_LIMITE_PLANOS_DIA limite diário de planos/doc por usuário (5)
+//   TELEGRAM_LIMITE_MSGS_DIA limite diário de mensagens por usuário (30)
 // NUNCA coloque uma chave neste arquivo nem em nenhum arquivo do repositório.
 
 'use strict';
 
 const http = require('http');
-const https = require('https');
+const { postJson, erroSeguro, chamarProvedorOpenAI } = require('./ia');
 const { sintetizar } = require('./edge-tts'); // vozes neurais Edge TTS (grátis)
+const telegram = require('./telegram'); // Brito no Telegram (webhook)
 
 const PORT = Number(process.env.PORT || 8787);
 const MAX_BODY_BYTES = 256 * 1024; // 256 KB — o MVP manda só prompt + mensagens curtas
@@ -113,30 +121,8 @@ function log(linha) {
   console.log(new Date().toISOString() + ' ' + linha);
 }
 
-// POST JSON para uma URL https. Devolve { status, texto }.
-function postJson(url, headers, bodyObj) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    const dados = JSON.stringify(bodyObj);
-    const req = https.request({
-      hostname: u.hostname,
-      port: u.port || 443,
-      path: u.pathname + u.search,
-      method: 'POST',
-      headers: Object.assign({
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(dados),
-      }, headers),
-    }, (resp) => {
-      let corpo = '';
-      resp.on('data', (c) => { corpo += c; });
-      resp.on('end', () => resolve({ status: resp.statusCode, texto: corpo }));
-    });
-    req.on('error', reject);
-    req.write(dados);
-    req.end();
-  });
-}
+// (postJson, erroSeguro e chamarProvedorOpenAI vivem em ia.js — usados
+// aqui e pelo bot do Telegram.)
 
 function responder(res, status, obj, origin) {
   const corpo = JSON.stringify(obj);
@@ -236,23 +222,24 @@ async function tratarChat(req, res, origin) {
       return responder(res, 200, { provider, modelo: prov.modelo, text: texto }, origin);
     }
 
-    // Maritaca e DeepSeek: formato compatível com OpenAI.
-    const r = await postJson(prov.endpoint,
-      { Authorization: 'Bearer ' + chave },
-      { model: prov.modelo, messages, temperature, max_tokens: maxTokens });
-    if (r.status < 200 || r.status >= 300) {
-      log(provider + ' -> ' + r.status + ' (erro da API)');
-      return responder(res, 502, { erro: 'A API respondeu HTTP ' + r.status + '.', detalhe: erroSeguro(r.texto) }, origin);
+    // Maritaca e DeepSeek: formato compatível com OpenAI (chamada interna
+    // em ia.js — a mesma que o bot do Telegram usa).
+    try {
+      const out = await chamarProvedorOpenAI(
+        { endpoint: prov.endpoint, modelo: prov.modelo, chave },
+        messages, temperature, maxTokens);
+      log(provider + ' -> 200 ok');
+      return responder(res, 200, {
+        provider, modelo: prov.modelo, text: out.text,
+        uso: out.uso || undefined,
+      }, origin);
+    } catch (e) {
+      if (e.codigo === 'api') {
+        log(provider + ' -> ' + (e.status || 'erro') + ' (erro da API)');
+        return responder(res, 502, { erro: e.message, detalhe: e.detalhe }, origin);
+      }
+      throw e; // erro de rede — cai no catch externo, que devolve 502
     }
-    const json = JSON.parse(r.texto);
-    const texto = json && json.choices && json.choices[0] && json.choices[0].message &&
-      json.choices[0].message.content;
-    if (!texto) return responder(res, 502, { erro: 'A API devolveu uma resposta vazia.' }, origin);
-    log(provider + ' -> 200 ok');
-    return responder(res, 200, {
-      provider, modelo: prov.modelo, text: texto,
-      uso: json.usage || undefined,
-    }, origin);
   } catch (e) {
     log(provider + ' -> 502 erro de rede: ' + e.message);
     return responder(res, 502, { erro: 'Não foi possível falar com a API do provedor (' + e.message + ').' }, origin);
@@ -376,15 +363,7 @@ async function tratarLiveToken(req, res, origin) {
   }
 }
 
-// Extrai uma mensagem de erro curta da resposta da API, sem vazar chaves.
-function erroSeguro(texto) {
-  try {
-    const j = JSON.parse(texto);
-    const msg = (j.error && (j.error.message || j.error)) || j.message || j.detail;
-    if (typeof msg === 'string' && msg.length > 0) return msg.slice(0, 300);
-  } catch (e) { /* não é JSON — ignora */ }
-  return undefined;
-}
+// (erroSeguro vive em ia.js — usado pelo /api/chat e pelo /api/live-token.)
 
 // ------------------------------------------------------------------ Voz neural
 // POST /api/tts { texto, personagem?, voz?, tom? }
@@ -477,6 +456,11 @@ const server = http.createServer(async (req, res) => {
         vozes: TTS_VOZES_PERMITIDAS.filter((v, i, a) => a.indexOf(v) === i),
         personagens: Object.keys(TTS_VOZES),
       },
+      telegram: {
+        endpoint: 'POST /api/telegram',
+        botConfigurado: telegram.botAtivo(),
+        limitesDiariosPorUsuario: { planos: telegram.LIMITE_PLANOS_DIA, mensagens: telegram.LIMITE_MSGS_DIA },
+      },
     }, origin);
   }
   if (req.method === 'POST' && url.pathname === '/api/chat') {
@@ -497,11 +481,19 @@ const server = http.createServer(async (req, res) => {
     }
     return tratarTts(req, res, origin);
   }
-  return responder(res, 404, { erro: 'Rota não encontrada. Use POST /api/chat, POST /api/live-token, POST /api/tts ou GET /health.' }, origin);
+  if (req.method === 'POST' && url.pathname === '/api/telegram') {
+    // Webhook do Telegram: chamada servidor-para-servidor, sem CORS.
+    // Sem TELEGRAM_BOT_TOKEN o bot fica inerte (responde 200 e ignora).
+    return telegram.tratarWebhook(req, res);
+  }
+  return responder(res, 404, { erro: 'Rota não encontrada. Use POST /api/chat, POST /api/live-token, POST /api/tts, POST /api/telegram ou GET /health.' }, origin);
 });
 
 server.listen(PORT, () => {
   log('proxy da Brittech Educação ouvindo na porta ' + PORT);
   log('provedores: ' + Object.keys(PROVIDERS).join(', ') +
     ' | chaves configuradas: ' + (Object.keys(PROVIDERS).filter((p) => !!PROVIDERS[p].chave()).join(', ') || 'nenhuma'));
+  // Bot do Telegram: com TELEGRAM_BOT_TOKEN configurado, registra o
+  // webhook sozinho; sem o token, o bot fica inerte e nada muda.
+  telegram.registrarWebhook().catch((e) => log('telegram: erro ao registrar webhook: ' + e.message));
 });

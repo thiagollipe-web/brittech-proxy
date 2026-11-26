@@ -20,5 +20,8 @@ services:
       #   MARITACA_API_KEY
       #   DEEPSEEK_API_KEY
       #   GEMINI_API_KEY
+      #   TELEGRAM_BOT_TOKEN — token do bot do Telegram (@BotFather);
+      #     sem ele o bot fica inerte; com ele, o webhook se registra
+      #     sozinho no restart (veja o README, seção "Brito no Telegram")
       - key: ALLOWED_ORIGINS
         value: https://thiagollipe-web.github.io
